@@ -29,15 +29,22 @@
  */
 package com.friya.wurmonline.server.priestlove;
 
-import com.wurmonline.server.Players;
 import com.wurmonline.server.creatures.Communicator;
 import com.wurmonline.server.creatures.Creature;
 import com.wurmonline.server.items.Item;
 import com.wurmonline.server.items.ItemSpellEffects;
 import com.wurmonline.server.players.Player;
+import com.wurmonline.server.players.PlayerInfo;
+import com.wurmonline.server.players.PlayerInfoFactory;
 import com.wurmonline.server.spells.SpellEffect;
-import java.lang.reflect.InvocationHandler;
-import java.lang.reflect.Method;
+import javassist.*;
+import javassist.bytecode.Descriptor;
+import javassist.expr.ExprEditor;
+import javassist.expr.MethodCall;
+import org.gotti.wurmunlimited.modloader.classhooks.HookManager;
+import org.gotti.wurmunlimited.modloader.interfaces.*;
+import org.gotti.wurmunlimited.modsupport.ModSupportDb;
+
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
@@ -46,39 +53,22 @@ import java.util.HashMap;
 import java.util.Properties;
 import java.util.logging.Level;
 import java.util.logging.Logger;
-import javassist.CannotCompileException;
-import javassist.ClassPool;
-import javassist.CtClass;
-import javassist.CtMethod;
-import javassist.CtPrimitiveType;
-import javassist.NotFoundException;
-import javassist.bytecode.Descriptor;
-import javassist.expr.ExprEditor;
-import javassist.expr.MethodCall;
-import org.gotti.wurmunlimited.modloader.classhooks.HookManager;
-import org.gotti.wurmunlimited.modloader.classhooks.InvocationHandlerFactory;
-import org.gotti.wurmunlimited.modloader.interfaces.Configurable;
-import org.gotti.wurmunlimited.modloader.interfaces.Initable;
-import org.gotti.wurmunlimited.modloader.interfaces.PreInitable;
-import org.gotti.wurmunlimited.modloader.interfaces.ServerStartedListener;
-import org.gotti.wurmunlimited.modloader.interfaces.WurmServerMod;
-import org.gotti.wurmunlimited.modsupport.ModSupportDb;
 
-public class Mod
-implements WurmServerMod,
-Initable,
-PreInitable,
-Configurable,
-ServerStartedListener {
-    private static Logger logger = Logger.getLogger(Mod.class.getName());
-    private static Mod instance = null;
+public class PriestLove
+implements WurmServerMod, Initable, PreInitable, Configurable, ServerStartedListener {
+    private static Logger logger = Logger.getLogger(PriestLove.class.getName());
+    private static PriestLove instance = null;
     private static final String TABLE_SPELLCASTERS = "FriyaSpellCasters";
+    protected static boolean useVanillaMessage = true;
+    protected static boolean obscureNames = true;
 
-    public static Mod getInstance() {
+    public static PriestLove getInstance() {
         return instance;
     }
 
-    public void configure(Properties arg0) {
+    public void configure(Properties properties) {
+        useVanillaMessage = Boolean.parseBoolean(properties.getProperty("useVanillaMessage", Boolean.toString(useVanillaMessage)));
+        obscureNames = Boolean.parseBoolean(properties.getProperty("obscureNames", Boolean.toString(obscureNames)));
     }
 
     public void onServerStarted() {
@@ -110,7 +100,8 @@ ServerStartedListener {
                 public void edit(MethodCall m) throws CannotCompileException {
                     if (m.getMethodName().equals("getSpellEffects")) {
                         logger.info("Replaced enchantment information output.");
-                        m.replace("com.friya.wurmonline.server.priestlove.Mod.getInstance().sendEnchantmentStrings(comm, $0); $_ = null;");
+                        m.replace(PriestLove.class.getName()+".getInstance().sendEnchantmentStrings(comm, $0);" +
+                                "$_ = null;");
                     }
                 }
             });
@@ -123,46 +114,28 @@ ServerStartedListener {
                     public void edit(MethodCall m) throws CannotCompileException {
                         if (m.getMethodName().equals("addSpellEffect")) {
                             logger.info("Improving (1) " + itemSpells[j]);
-                            m.replace("$_ = $proceed($$);com.friya.wurmonline.server.priestlove.Mod.getInstance().addSpellEffectCaster($0, eff, performer); ");
+                            m.replace("$_ = $proceed($$);" +
+                                    PriestLove.class.getName()+".getInstance().addSpellEffectCaster($0, eff, performer); ");
                         } else if (m.getMethodName().equals("improvePower")) {
                             logger.info("Improving (2) " + itemSpells[j]);
-                            m.replace("$_ = $proceed($$);com.friya.wurmonline.server.priestlove.Mod.getInstance().replaceSpellEffectCaster($0, eff, performer); ");
+                            m.replace("$_ = $proceed($$);" +
+                                    PriestLove.class.getName()+".getInstance().replaceSpellEffectCaster($0, eff, performer); ");
                         }
                     }
                 });
                 ++i;
             }
-            String descriptor = Descriptor.ofMethod((CtClass)cp.get("com.wurmonline.server.spells.SpellEffect"), (CtClass[])new CtClass[]{CtPrimitiveType.byteType});
-            HookManager.getInstance().registerHook("com.wurmonline.server.items.ItemSpellEffects", "removeSpellEffect", descriptor, new InvocationHandlerFactory(){
-
-                public InvocationHandler createInvocationHandler() {
-                    return new InvocationHandler(){
-
-                        @Override
-                        public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {
-                            Object ret = method.invoke(proxy, args);
-                            Mod.getInstance().removeSpellEffectCaster((SpellEffect)ret);
-                            return ret;
-                        }
-                    };
-                }
-
+            String descriptor = Descriptor.ofMethod(cp.get("com.wurmonline.server.spells.SpellEffect"), new CtClass[]{CtPrimitiveType.byteType});
+            HookManager.getInstance().registerHook("com.wurmonline.server.items.ItemSpellEffects", "removeSpellEffect", descriptor, () -> (proxy, method, args) -> {
+                Object ret = method.invoke(proxy, args);
+                PriestLove.getInstance().removeSpellEffectCaster((SpellEffect)ret);
+                return ret;
             });
-            descriptor = Descriptor.ofMethod((CtClass)CtPrimitiveType.voidType, (CtClass[])new CtClass[0]);
-            HookManager.getInstance().registerHook("com.wurmonline.server.items.ItemSpellEffects", "destroy", descriptor, new InvocationHandlerFactory(){
-
-                public InvocationHandler createInvocationHandler() {
-                    return new InvocationHandler(){
-
-                        @Override
-                        public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {
-                            Mod.getInstance().removeAllSpellEffectCasters((ItemSpellEffects)proxy);
-                            Object ret = method.invoke(proxy, args);
-                            return ret;
-                        }
-                    };
-                }
-
+            descriptor = Descriptor.ofMethod(CtPrimitiveType.voidType, new CtClass[0]);
+            HookManager.getInstance().registerHook("com.wurmonline.server.items.ItemSpellEffects", "destroy", descriptor, () -> (proxy, method, args) -> {
+                PriestLove.getInstance().removeAllSpellEffectCasters((ItemSpellEffects)proxy);
+                Object ret = method.invoke(proxy, args);
+                return ret;
             });
         }
         catch (CannotCompileException | NotFoundException e) {
@@ -195,8 +168,8 @@ ServerStartedListener {
     }
 
     public void sendEnchantmentStrings(Communicator comm, Item item) {
-        String caster = "";
-        HashMap<Byte, Long> castsLookup = new HashMap<Byte, Long>();
+        String caster;
+        HashMap<Byte, Long> castsLookup = new HashMap<>();
         ItemSpellEffects eff = item.getSpellEffects();
         if (eff != null) {
             SpellEffect[] speffs = eff.getEffects();
@@ -208,14 +181,14 @@ ServerStartedListener {
                     ps.setLong(1, speffs[0].owner);
                     ResultSet rs = ps.executeQuery();
                     while (rs.next()) {
-                        castsLookup.put(Byte.valueOf(rs.getByte(1)), rs.getLong(2));
+                        castsLookup.put(rs.getByte(1), rs.getLong(2));
                     }
                 }
                 catch (SQLException e) {
                     logger.info("Non-critical error, failed to exeute " + sql + "\n" + e.toString());
                 }
             }
-            Player p = null;
+            //Player p;
             int x = 0;
             while (x < speffs.length) {
                 if (speffs[x].isSmeared()) {
@@ -223,8 +196,27 @@ ServerStartedListener {
                 } else if ((long)speffs[x].type < -10) {
                     comm.sendNormalServerMessage("A single " + speffs[x].getName() + " has been attached to it, so it " + speffs[x].getLongDesc());
                 } else {
-                    caster = !castsLookup.containsKey(Byte.valueOf(speffs[x].type)) || (p = Players.getInstance().getPlayerOrNull(((Long)castsLookup.get(Byte.valueOf(speffs[x].type))).longValue())) == null ? "a priest" : this.getSignature(p.getName(), (int)speffs[x].power);
-                    this.tell(comm, String.valueOf(speffs[x].getName()) + " with a power of " + (int)speffs[x].power + " has been cast on it by " + caster + ". This " + speffs[x].getLongDesc());
+                    if(castsLookup.containsKey(speffs[x].type)){
+                        PlayerInfo info = PlayerInfoFactory.getPlayerInfoWithWurmId(castsLookup.get(speffs[x].type));
+                        //p = Players.getInstance().getPlayerOrNull(castsLookup.get(speffs[x].type));
+                        if(info != null){
+                            if(obscureNames) {
+                                caster = this.getSignature(info.getName(), (int) speffs[x].power);
+                            }else{
+                                caster = info.getName();
+                            }
+                        }else{
+                            caster = "a priest";
+                        }
+                    }else{
+                        caster = "a priest";
+                    }
+                    //caster = !castsLookup.containsKey(speffs[x].type) || (p = Players.getInstance().getPlayerOrNull(castsLookup.get(speffs[x].type))) == null ? "a priest" : this.getSignature(p.getName(), (int)speffs[x].power);
+                    if(useVanillaMessage){
+                        this.tell(comm, speffs[x].getName() + " has been cast on it, so it " + speffs[x].getLongDesc() + " [" + (int)speffs[x].power + "] Casted by "+caster+".");
+                    }else {
+                        this.tell(comm, String.valueOf(speffs[x].getName()) + " with a power of " + (int) speffs[x].power + " has been cast on it by " + caster + ". This " + speffs[x].getLongDesc());
+                    }
                 }
                 ++x;
             }
@@ -235,14 +227,14 @@ ServerStartedListener {
         c.sendNormalServerMessage(msg);
     }
 
-    private final String getSignature(String name, int ql) {
+    private String getSignature(String name, int ql) {
         if (name != null && name.length() > 0) {
             String toReturn = name;
             if (ql < 20) {
                 return "..?.";
             }
             if (ql < 90) {
-                toReturn = Item.obscureWord((String)name, (int)ql);
+                toReturn = Item.obscureWord(name, ql);
             }
             return toReturn;
         }

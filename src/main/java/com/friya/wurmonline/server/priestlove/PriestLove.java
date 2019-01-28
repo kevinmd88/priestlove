@@ -215,7 +215,8 @@ implements WurmServerMod, Initable, PreInitable, Configurable, ServerStartedList
                     if(useVanillaMessage){
                         this.tell(comm, speffs[x].getName() + " has been cast on it, so it " + speffs[x].getLongDesc() + " [" + (int)speffs[x].power + "] Casted by "+caster+".");
                     }else {
-                        this.tell(comm, String.valueOf(speffs[x].getName()) + " with a power of " + (int) speffs[x].power + " has been cast on it by " + caster + ". This " + speffs[x].getLongDesc());
+                        //this.tell(comm, String.valueOf(speffs[x].getName()) + " with a power of " + (int) speffs[x].power + " has been cast on it by " + caster + ". This " + speffs[x].getLongDesc());
+                        this.tell(comm, speffs[x].getName() + " has been cast on it by "+caster+".", so it " + speffs[x].getLongDesc() + " [" + (int)speffs[x].power + "]");
                     }
                 }
                 ++x;
